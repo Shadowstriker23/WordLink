@@ -1,0 +1,14 @@
+packages:
+  - .
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - "prisma"
+  - "esbuild"
+  - "better-sqlite3"
+  - "tesseract.js"
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true
+  esbuild: true
+  better-sqlite3: true
+  tesseract.js: true

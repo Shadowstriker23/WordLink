@@ -1,0 +1,117 @@
+// wordlink - 英语单词记忆知识库
+// 数据模型: 单词 / 标签 / 关系 / 复习
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum Source {
+  MANUAL
+  OCR
+}
+
+enum TagType {
+  ROOT
+  AFFIX
+  MEANING
+  GRAMMAR
+  CUSTOM
+}
+
+enum RelationshipType {
+  SYNONYM
+  ANTONYM
+  SAME_ROOT
+  SAME_AFFIX
+  SAME_GRAMMAR
+  CUSTOM
+}
+
+model Word {
+  id              String   @id @default(cuid())
+  text            String
+  meaning         String
+  pronunciation   String?
+  exampleSentence String?
+  source          Source   @default(MANUAL)
+  imageUrl        String?
+  aiSummary       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tags          WordTag[]
+  relationships Relationship[]   @relation("SourceWord")
+  relatedTo     Relationship[]   @relation("TargetWord")
+  review        Review?
+  reviewLogs    ReviewLog[]
+
+  @@unique([text])
+}
+
+model Tag {
+  id          String  @id @default(cuid())
+  name        String
+  type        TagType
+  color       String  @default("#6366f1")
+  description String? // 词根/词缀的本意解释，如 "spect = 看，注视"
+
+  words WordTag[]
+
+  @@unique([name, type])
+}
+
+model WordTag {
+  wordId String
+  tagId  String
+  word   Word @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([wordId, tagId])
+}
+
+model Relationship {
+  id           String           @id @default(cuid())
+  sourceWordId String
+  targetWordId String
+  type         RelationshipType
+  description  String?
+
+  sourceWord Word @relation("SourceWord", fields: [sourceWordId], references: [id], onDelete: Cascade)
+  targetWord Word @relation("TargetWord", fields: [targetWordId], references: [id], onDelete: Cascade)
+}
+
+model Review {
+  wordId        String    @id
+  stability     Float     @default(0)
+  difficulty    Float     @default(0)
+  elapsedDays   Int       @default(0)
+  scheduledDays Int       @default(0)
+  reps          Int       @default(0)
+  lapses        Int       @default(0)
+  state         Int       @default(0) // 0=New 1=Learning 2=Review 3=Relearning
+  learningSteps Int       @default(0)
+  lastReview    DateTime?
+  due           DateTime  @default(now())
+
+  word Word @relation(fields: [wordId], references: [id], onDelete: Cascade)
+}
+
+model ReviewLog {
+  id            String   @id @default(cuid())
+  wordId        String
+  rating        Int // 1=Again 2=Hard 3=Good 4=Easy
+  state         Int
+  elapsedDays   Int      @default(0)
+  scheduledDays Int      @default(0)
+  stability     Float    @default(0)
+  difficulty    Float    @default(0)
+  durationMs    Int?
+  reviewDate    DateTime @default(now())
+
+  word Word @relation(fields: [wordId], references: [id], onDelete: Cascade)
+}
