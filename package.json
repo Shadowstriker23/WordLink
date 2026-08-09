@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "db:dict": "tsx scripts/import-ecdict.ts",
+    "db:dict-safe": "node --max-old-space-size=1024 scripts/import-ecdict.mjs",
     "dict:pos": "tsx scripts/add-pos.ts"
   },
   "dependencies": {

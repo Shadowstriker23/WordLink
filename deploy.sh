@@ -59,7 +59,7 @@ if [ ! -f "$APP_DIR/data/ecdict.db" ]; then
   echo "==> 2.5/4 构建词典库"
   if [ -f "$APP_DIR/ecdict.csv" ]; then
     echo "  找到 ecdict.csv，正在导入（约耗时 1-2 分钟）..."
-    sudo -u "$APP_USER" pnpm db:dict
+    sudo -u "$APP_USER" node --max-old-space-size=1024 "$APP_DIR/scripts/import-ecdict.mjs"
   else
     echo "  正在下载 ECDICT 词典数据（约 65MB）..."
     curl -L --retry 3 --max-time 300 \
@@ -67,7 +67,7 @@ if [ ! -f "$APP_DIR/data/ecdict.db" ]; then
       "https://ghfast.top/https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv" \
       || echo "  下载失败，跳过词典构建（标签检索将缺失词典释义）"
     if [ -f "$APP_DIR/ecdict.csv" ]; then
-      sudo -u "$APP_USER" pnpm db:dict
+      sudo -u "$APP_USER" node --max-old-space-size=1024 "$APP_DIR/scripts/import-ecdict.mjs"
       rm "$APP_DIR/ecdict.csv"
     fi
   fi
