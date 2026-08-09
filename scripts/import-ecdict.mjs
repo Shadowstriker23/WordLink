@@ -76,7 +76,7 @@ async function main() {
   db.run("CREATE TABLE entries (word TEXT PRIMARY KEY, phonetic TEXT, definition TEXT, translation TEXT, pos TEXT, pos_list TEXT DEFAULT '', tag TEXT, bnc INTEGER, frq INTEGER, exchange TEXT, detail TEXT)");
 
   const stmt =
-    "INSERT INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
+    "INSERT OR IGNORE INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
 
   console.log("导入中...");
   let count = 0;
