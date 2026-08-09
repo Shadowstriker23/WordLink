@@ -38,6 +38,12 @@ elif command -v sudo >/dev/null 2>&1; then
   sudo apt-get install -y -qq python3 make gcc g++ 2>/dev/null || true
 fi
 
+# ── 配置文件 ─────────────────────────────────────────────
+if [ ! -f "$APP_DIR/.env" ]; then
+  echo "  创建 .env（请编辑填入 DEEPSEEK_API_KEY）"
+  cp "$APP_DIR/.env.example" "$APP_DIR/.env"
+fi
+
 # ── 安装依赖 ──────────────────────────────────────────
 echo "==> 1/4 安装 npm 依赖"
 cd "$APP_DIR"
