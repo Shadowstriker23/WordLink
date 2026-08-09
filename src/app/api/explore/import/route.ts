@@ -99,7 +99,11 @@ export async function POST(req: NextRequest) {
       const item = analysis.words[0];
       aiTags = item.tags ?? [];
       for (const t of aiTags) {
-        const tag = await upsertTag(t.name, t.type as TagType, t.description);
+        let name = t.name;
+        if (t.type === "MEANING" && !name.startsWith("意思:")) {
+          name = `意思:${name}`;
+        }
+        const tag = await upsertTag(name, t.type as TagType, t.description);
         const has = await prisma.wordTag.findFirst({
           where: { wordId: word.id, tagId: tag.id },
         });

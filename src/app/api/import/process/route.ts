@@ -49,11 +49,16 @@ export async function POST(req: NextRequest) {
 
       const tags = [];
       for (const tag of item.tags ?? []) {
+        let name = tag.name;
+        // AI 可能生成不带"意思:"前缀的 meaning 标签，统一规范化
+        if (tag.type === "MEANING" && !name.startsWith("意思:")) {
+          name = `意思:${name}`;
+        }
         const saved = await prisma.tag.upsert({
-          where: { name_type: { name: tag.name, type: tag.type } },
+          where: { name_type: { name, type: tag.type } },
           update: { description: tag.description || undefined },
           create: {
-            name: tag.name,
+            name,
             type: tag.type,
             description: tag.description || undefined,
           },
