@@ -216,3 +216,27 @@ export function isPosToken(token: string): boolean {
   const t = token.toLowerCase().replace(".", "");
   return POS_SET.has(t);
 }
+
+/** 变形 → 原型还原（如 "creates" → "create", "running" → "run"） */
+export async function lookupLemma(word: string): Promise<{ base: string; type: string } | null> {
+  const db = getClient();
+  if (!db) return null;
+  const lower = word.toLowerCase();
+  const res = await db.execute({
+    sql: "SELECT base, type FROM lemma_map WHERE form = ? LIMIT 1",
+    args: [lower],
+  });
+  if (res.rows.length === 0) return null;
+  return { base: res.rows[0][0] as string, type: res.rows[0][1] as string };
+}
+
+/** 获取单词的所有变形形式 */
+export async function getInflections(word: string): Promise<{ form: string; type: string }[]> {
+  const db = getClient();
+  if (!db) return [];
+  const res = await db.execute({
+    sql: "SELECT form, type FROM lemma_map WHERE base = ? ORDER BY type",
+    args: [word],
+  });
+  return res.rows.map((r) => ({ form: r[0] as string, type: r[1] as string }));
+}

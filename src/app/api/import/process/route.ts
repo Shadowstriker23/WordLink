@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeWords } from "@/lib/ai";
 import { prisma } from "@/lib/db";
 import { getOrCreateReview } from "@/lib/fsrs";
-import { lookupWord, parseTranslation } from "@/lib/dict";
+import { lookupWord, parseTranslation, lookupLemma } from "@/lib/dict";
 
 async function upsertTag(
   name: string,
@@ -35,8 +35,25 @@ export async function POST(req: NextRequest) {
     );
     const newWords = words.filter((w) => !existingSet.has(w.toLowerCase()));
 
+    // 词形还原：运行中的 "creates/ed/ing" 等变形自动转向原型
+    const lemmaMap = new Map<string, { base: string; type: string }>();
+    const resolvedWords: string[] = [];
+    for (const w of newWords) {
+      const lemma = await lookupLemma(w);
+      if (lemma && !existingSet.has(lemma.base)) {
+        lemmaMap.set(w, { base: lemma.base, type: lemma.type });
+        resolvedWords.push(lemma.base);
+      } else if (lemma) {
+        // 原型已存在，跳过
+        lemmaMap.set(w, { base: lemma.base, type: lemma.type });
+      } else {
+        resolvedWords.push(w);
+      }
+    }
+    const dedupped = [...new Set(resolvedWords)];
+
     const analysis = await analyzeWords({
-      words: newWords,
+      words: dedupped,
       existingWords: [...existingSet],
     });
 
@@ -138,7 +155,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ words: results });
+    const lemmas: Record<string, { base: string; type: string }> = {};
+    for (const [orig, info] of lemmaMap) lemmas[orig] = info;
+
+    return NextResponse.json({ words: results, lemmas });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "处理失败";
     return NextResponse.json({ error: msg }, { status: 500 });

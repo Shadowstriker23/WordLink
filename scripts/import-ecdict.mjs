@@ -111,8 +111,45 @@ async function main() {
   }
   db.run("COMMIT");
 
+  // ── 构建词形映射表（变形 → 原型）────────────────────
+  console.log("构建词形还原表...");
+  db.run("CREATE TABLE lemma_map (form TEXT, base TEXT, type TEXT, PRIMARY KEY (form, base, type))");
+
+  const TYPE_LABEL = { p:"过去式", d:"过去分词", s:"三单", i:"现在分词", ing:"现在分词", r:"比较级", t:"最高级", "0":"原型", "1":"复数" };
+
+  let lcount = 0;
+  const lemmaResults = db.exec("SELECT word, exchange FROM entries WHERE exchange != '' AND exchange != '/'");
+  if (lemmaResults.length && lemmaResults[0].values) {
+    const ins = db.prepare("INSERT OR IGNORE INTO lemma_map (form, base, type) VALUES (?, ?, ?)");
+    db.run("BEGIN");
+    for (const [word, exchange] of lemmaResults[0].values) {
+      const parts = String(exchange).split("/");
+      for (const part of parts) {
+        const colon = part.indexOf(":");
+        if (colon < 1) continue;
+        const typ = part.slice(0, colon).trim();
+        const vals = part.slice(colon + 1).trim();
+        if (!vals) continue;
+        const label = TYPE_LABEL[typ] ?? typ;
+        for (const form of vals.split(",")) {
+          const f = form.trim().toLowerCase();
+          if (f && f !== word.toLowerCase() && typ !== "0") {
+            ins.run([f, word, label]);
+            lcount++;
+          }
+        }
+      }
+      if (lcount % 5000 === 0) {
+        db.run("COMMIT"); db.run("BEGIN");
+      }
+    }
+    db.run("COMMIT");
+  }
+  console.log(`  词形映射 ${lcount} 条`);
+
   console.log("创建索引...");
   db.run("CREATE INDEX IF NOT EXISTS idx_entries_lower ON entries(LOWER(word))");
+  db.run("CREATE INDEX IF NOT EXISTS idx_lemma_form ON lemma_map(form)");
 
   console.log("写入文件...");
   const buffer = db.export();

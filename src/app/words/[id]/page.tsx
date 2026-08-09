@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { lookupWord } from "@/lib/dict";
+import { lookupWord, getInflections } from "@/lib/dict";
 import { Card } from "@/components/ui/card";
 import { SetPanel } from "@/components/set-panel";
 import { WordAudio } from "@/components/word-audio";
+import { TagBadge } from "@/components/ui/badge";
 import { getRetrievability, reviewToCard } from "@/lib/fsrs";
 import { formatDate } from "@/lib/utils";
 import { Brain, ExternalLink } from "lucide-react";
@@ -46,6 +47,7 @@ export default async function WordDetailPage({
   const phonetic = word.pronunciation ?? dict?.phonetic ?? null;
   const meanings = dict?.meanings.length ? dict.meanings : null;
   const example = word.exampleSentence ?? dict?.example ?? null;
+  const inflections = await getInflections(word.text);
 
   const retrievability = word.review
     ? getRetrievability(reviewToCard(word.review))
@@ -97,6 +99,19 @@ export default async function WordDetailPage({
           )}
         </div>
       </div>
+
+      {/* 词形变化 */}
+      {inflections.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2/40 px-4 py-2.5">
+          <span className="text-sm font-semibold text-muted">词形</span>
+          {inflections.map((infl, i) => (
+            <TagBadge key={i} type="CUSTOM">
+              {infl.form}
+              <span className="ml-1 text-muted">{infl.type}</span>
+            </TagBadge>
+          ))}
+        </div>
+      )}
 
       {/* 词性分段的释义大板块 */}
       <section className="space-y-6">
