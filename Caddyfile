@@ -1,0 +1,8 @@
+# HTTP only（无域名时用 IP 访问）
+:80 {
+    reverse_proxy localhost:3000
+    header {
+        X-Forwarded-For {remote_host}
+        X-Forwarded-Proto http
+    }
+}

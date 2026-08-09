@@ -1,13 +1,12 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { searchByTranslation } from "@/lib/dict";
 import { getAffixDescription } from "@/lib/affix-desc";
 import { Card } from "@/components/ui/card";
 import { TagBadge, Badge } from "@/components/ui/badge";
 import { SetPanel } from "@/components/set-panel";
 import { formatDate } from "@/lib/utils";
 import { Hash, Info } from "lucide-react";
-import type { DictSuggestion } from "@/lib/dict";
 
 export const dynamic = "force-dynamic";
 
@@ -43,22 +42,11 @@ export default async function TagPage({
     },
   });
 
-  // 词义标签的词典兜底：搜翻译里含该意思的词（同义词）
-  const isMeaningTag = decoded.startsWith("意思:");
-  const meaningText = isMeaningTag ? decoded.slice("意思:".length) : "";
-  let dictWords: DictSuggestion[] = [];
-  if (isMeaningTag && meaningText) {
-    dictWords = await searchByTranslation(meaningText, 40);
-  }
+  if (tags.length === 0) notFound();
 
   const words = tags
     .flatMap((t) => t.words.map((w) => ({ ...w, tagType: t.type })))
     .filter((w, i, arr) => arr.findIndex((x) => x.wordId === w.wordId) === i);
-
-  const wordSet = new Set(words.map((w) => w.word.text.toLowerCase()));
-  const dictWordsFiltered = dictWords.filter(
-    (d) => !wordSet.has(d.word.toLowerCase())
-  );
 
   // 词根/词缀的本意解释（优先库里存的，否则查对照表）
   const description =
@@ -89,23 +77,9 @@ export default async function TagPage({
           ))}
           <span className="text-muted">
             词库 {words.length} 个词
-            {isMeaningTag && (
-              <span className="ml-1"> · 词典 {dictWordsFiltered.length} 个候选</span>
-            )}
           </span>
         </div>
       </div>
-
-      {tags.length === 0 && words.length === 0 && (
-        <Card className="p-5 text-sm text-muted">
-          该标签尚未收录于词库。
-          {isMeaningTag
-            ? "下面是从词典中找到的释义含「" +
-              meaningText +
-              "」的单词，点击可查看并收录。"
-            : "点击右侧标签面板中的词根/词缀/意思标签，或去标签检索页搜索。"}
-        </Card>
-      )}
 
       {words.length > 0 && (
         <div className="space-y-2">
@@ -144,29 +118,6 @@ export default async function TagPage({
               </Card>
             </Link>
           ))}
-        </div>
-      )}
-
-      {dictWordsFiltered.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-muted">
-            词典中的相关词（{dictWordsFiltered.length}）
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {dictWordsFiltered.map((d) => (
-              <Link
-                key={d.word}
-                href={`/explore?word=${encodeURIComponent(d.word)}`}
-              >
-                <Card className="flex items-center gap-2 px-3 py-2 transition-shadow hover:shadow-md">
-                  <span className="font-medium text-primary">{d.word}</span>
-                  <span className="max-w-[180px] truncate text-xs text-muted">
-                    {d.translation?.split("\n")[0]}
-                  </span>
-                </Card>
-              </Link>
-            ))}
-          </div>
         </div>
       )}
     </div>

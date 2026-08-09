@@ -83,16 +83,11 @@ export function parseTranslation(translation: string): PosMeaning[] {
       const meanings = m[3]
         .split(/[;,；，]/)
         .map((s) => s.trim())
-        .filter(Boolean);
-      result.push({ pos, meanings });
+        .filter((s) => s.length > 0 && s.length <= 60);
+      if (meanings.length > 0) result.push({ pos, meanings });
     }
   }
-  if (result.length === 0 && groups[0]) {
-    result.push({
-      pos: "",
-      meanings: groups.map((g) => g.trim()).filter(Boolean),
-    });
-  }
+  // 没有匹配到时返回空，不使用原文兜底（避免整段译文中混入例句）
   return result;
 }
 
