@@ -4,6 +4,8 @@ import { getNavItems } from "@/lib/registry";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
+export const dynamic = "force-dynamic";
+
 async function getStats() {
   const [totalWords, totalTags, dueCount, newCount, reviewLogs, reviews] =
     await Promise.all([

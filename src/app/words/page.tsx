@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TagBadge } from "@/components/ui/badge";
 import { daysSince } from "@/lib/utils";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, RefreshCw } from "lucide-react";
 
 interface Tag {
   id: string;
@@ -35,6 +36,23 @@ export default function WordsPage() {
   const [type, setType] = useState<string>("");
   const [words, setWords] = useState<Word[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [reanalyzeMsg, setReanalyzeMsg] = useState("");
+
+  const reanalyze = async () => {
+    setReanalyzing(true);
+    setReanalyzeMsg("");
+    try {
+      const res = await fetch("/api/reanalyze", { method: "POST" });
+      const data = await res.json();
+      setReanalyzeMsg(`完成: 补词性${data.posAdded} 补意思${data.meaningAdded} 清理${data.cleaned}`);
+      load();
+    } catch {
+      setReanalyzeMsg("失败");
+    } finally {
+      setReanalyzing(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,6 +100,22 @@ export default function WordsPage() {
           <option value="MEANING">意思</option>
           <option value="GRAMMAR">语法</option>
         </select>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={reanalyze}
+          disabled={reanalyzing}
+        >
+          {reanalyzing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          重新分析
+        </Button>
+        {reanalyzeMsg && (
+          <span className="text-sm text-success">{reanalyzeMsg}</span>
+        )}
       </div>
 
       {loading ? (
