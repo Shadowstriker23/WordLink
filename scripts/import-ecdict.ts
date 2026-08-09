@@ -12,41 +12,11 @@ if (!existsSync(CSV_PATH)) {
   process.exit(1);
 }
 
-mkdirSync(path.dirname(DB_PATH), { recursive: true });
-const db = new Database(DB_PATH);
-
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  DROP TABLE IF EXISTS entries;
-  CREATE TABLE entries (
-    word        TEXT PRIMARY KEY,
-    phonetic    TEXT,
-    definition  TEXT,
-    translation TEXT,
-    pos         TEXT,
-    pos_list    TEXT DEFAULT '',
-    tag         TEXT,
-    bnc         INTEGER,
-    frq         INTEGER,
-    exchange    TEXT,
-    detail      TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_entries_lower ON entries(lower(word));
-`);
-
-const insert = db.prepare(`
-  INSERT INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail)
-  VALUES (@word, @phonetic, @definition, @translation, @pos, @pos_list, @tag, @bnc, @frq, @exchange, @detail)
-`);
+const BATCH_SIZE = 5000;
+const LOG_INTERVAL = 100000;
 
 const POS_PATTERN = /^(?:\[[^\]]+\]\s*)?([a-z]+)\.\s*/i;
-
-const POS_NORMALIZE: Record<string, string> = {
-  a: "adj",
-  ad: "adv",
-  vt: "v",
-  vi: "v",
-};
+const POS_NORMALIZE: Record<string, string> = { a: "adj", ad: "adv", vt: "v", vi: "v" };
 
 function extractPos(translation: string): string {
   if (!translation) return "";
@@ -61,13 +31,39 @@ function extractPos(translation: string): string {
   return [...pos].join(",");
 }
 
-const parser = parse({ columns: true, relax_quotes: true, bom: true });
-
 async function main() {
+  mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  const db = new Database(DB_PATH);
+
+  db.exec(`
+    PRAGMA journal_mode = OFF;
+    PRAGMA synchronous = OFF;
+    DROP TABLE IF EXISTS entries;
+    CREATE TABLE entries (
+      word        TEXT PRIMARY KEY,
+      phonetic    TEXT,
+      definition  TEXT,
+      translation TEXT,
+      pos         TEXT,
+      pos_list    TEXT DEFAULT '',
+      tag         TEXT,
+      bnc         INTEGER,
+      frq         INTEGER,
+      exchange    TEXT,
+      detail      TEXT
+    );
+  `);
+
+  const insert = db.prepare(`
+    INSERT INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail)
+    VALUES (@word, @phonetic, @definition, @translation, @pos, @pos_list, @tag, @bnc, @frq, @exchange, @detail)
+  `);
+
   let count = 0;
   let skipped = 0;
-  let batch = 0;
-  const runBatch = db.transaction((rows: Record<string, string>[]) => {
+  let buffer: Record<string, string>[] = [];
+
+  const flush = db.transaction((rows: typeof buffer) => {
     for (const r of rows) {
       const word = (r.word ?? "").trim();
       if (!word || !r.translation) {
@@ -91,38 +87,44 @@ async function main() {
     }
   });
 
-  let buffer: Record<string, string>[] = [];
-  const BATCH = 20000;
+  console.log("开始导入...");
 
-  await new Promise<void>((resolve, reject) => {
-    createReadStream(CSV_PATH)
-      .pipe(parser)
-      .on("data", (row: Record<string, string>) => {
-        buffer.push(row);
-        if (buffer.length >= BATCH) {
-          runBatch(buffer);
-          batch++;
-          buffer = [];
-          if (batch % 10 === 0) {
-            console.log(`已导入 ${count} 条...`);
-          }
-        }
-      })
-      .on("end", () => {
-        if (buffer.length) runBatch(buffer);
-        resolve();
-      })
-      .on("error", reject);
-  });
+  const parser = createReadStream(CSV_PATH).pipe(
+    parse({ columns: true, relax_quotes: true, bom: true })
+  );
+
+  for await (const row of parser) {
+    buffer.push(row as Record<string, string>);
+    if (buffer.length >= BATCH_SIZE) {
+      flush(buffer);
+      buffer = [];
+      if (count % LOG_INTERVAL < BATCH_SIZE) {
+        console.log(`  已导入 ${count} 条...`);
+      }
+    }
+  }
+
+  if (buffer.length) flush(buffer);
+
+  console.log("创建索引...");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_entries_lower ON entries(lower(word))");
+  db.exec("PRAGMA journal_mode = WAL");
 
   const size = (statSync(DB_PATH).size / 1048576).toFixed(1);
-  console.log(`\n导入完成: ${count} 条 (跳过 ${skipped} 条无释义记录)`);
+  console.log(`\n导入完成: ${count} 条 (跳过 ${skipped} 条)`);
   console.log(`数据库: ${DB_PATH} (${size} MB)`);
 
   db.close();
 }
 
 main().catch((e) => {
-  console.error(e);
+  if (e instanceof Error) {
+    console.error("导入失败:", e.message);
+    if (e.message.includes("SIGSEGV") || e.message.includes("killed")) {
+      console.error("可能内存不足，请确保至少有 500MB 空闲内存");
+    }
+  } else {
+    console.error("导入失败:", e);
+  }
   process.exit(1);
 });
