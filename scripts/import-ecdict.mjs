@@ -1,7 +1,7 @@
-// 词典导入 - 最小化依赖，避免任何可能的 native/流式崩溃
+// 词典导入 - sql.js 纯 WASM 版本（零原生依赖）
 // node --max-old-space-size=1024 scripts/import-ecdict.mjs
-import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
-import Database from "better-sqlite3";
+import { readFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import initSqlJs from "sql.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,24 +14,18 @@ if (!existsSync(CSV_PATH)) {
   process.exit(1);
 }
 
-// ── 轻量 CSV 解析（处理引号内的逗号和换行）────────────
+// ── 轻量 CSV 解析 ─────────────────────────────────────
 function parseCSVLine(line) {
   const fields = [];
-  let field = "";
-  let inQuotes = false;
+  let field = "", inQuotes = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
-    if (c === '"' && !inQuotes) {
-      inQuotes = true;
-    } else if (c === '"' && inQuotes) {
+    if (c === '"' && !inQuotes) { inQuotes = true; }
+    else if (c === '"' && inQuotes) {
       if (line[i + 1] === '"') { field += '"'; i++; }
       else { inQuotes = false; }
-    } else if (c === "," && !inQuotes) {
-      fields.push(field.trimStart());
-      field = "";
-    } else {
-      field += c;
-    }
+    } else if (c === "," && !inQuotes) { fields.push(field.trimStart()); field = ""; }
+    else { field += c; }
   }
   fields.push(field.trimStart());
   return fields;
@@ -39,8 +33,7 @@ function parseCSVLine(line) {
 
 function parseAllRows(text) {
   const lines = [];
-  let current = "";
-  let inQuotes = false;
+  let current = "", inQuotes = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '"' && !inQuotes) { inQuotes = true; }
@@ -48,114 +41,87 @@ function parseAllRows(text) {
     else if ((c === "\n" || c === "\r") && !inQuotes) {
       if (current.trim()) lines.push(current);
       current = "";
-      // 跳过 \r\n 中的 \n
       if (c === "\r" && text[i + 1] === "\n") i++;
-    } else {
-      current += c;
-    }
+    } else { current += c; }
   }
   if (current.trim()) lines.push(current);
   return lines;
 }
 
-// ── POS 解析 ───────────────────────────────────────────
 const POS_PATTERN = /^(?:\[[^\]]+\]\s*)?([a-z]+)\.\s*/i;
 const POS_NORMALIZE = { a: "adj", ad: "adv", vt: "v", vi: "v" };
-
-function extractPos(translation) {
-  if (!translation) return "";
-  const set = new Set();
-  for (const line of translation.split("\n")) {
-    const m = line.match(POS_PATTERN);
-    if (m) set.add(POS_NORMALIZE[m[1].toLowerCase()] ?? m[1].toLowerCase());
-  }
-  return [...set].join(",");
+function extractPos(t) {
+  if (!t) return "";
+  const s = new Set();
+  for (const l of t.split("\n")) { const m = l.match(POS_PATTERN); if (m) s.add(POS_NORMALIZE[m[1].toLowerCase()] ?? m[1].toLowerCase()); }
+  return [...s].join(",");
 }
 
 // ── 主流程 ─────────────────────────────────────────────
-function main() {
+async function main() {
+  const SQL = await initSqlJs();
   mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const db = new Database(DB_PATH);
-
-  db.exec(`
-    PRAGMA journal_mode = OFF;
-    PRAGMA synchronous = OFF;
-    DROP TABLE IF EXISTS entries;
-    CREATE TABLE entries (
-      word TEXT PRIMARY KEY, phonetic TEXT, definition TEXT,
-      translation TEXT, pos TEXT, pos_list TEXT DEFAULT '',
-      tag TEXT, bnc INTEGER, frq INTEGER, exchange TEXT, detail TEXT
-    );
-  `);
-
-  const insert = db.prepare(`
-    INSERT INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail)
-    VALUES (@word, @phonetic, @definition, @translation, @pos, @pos_list, @tag, @bnc, @frq, @exchange, @detail)
-  `);
 
   console.log("读取 CSV...");
   const raw = readFileSync(CSV_PATH, "utf-8");
-  console.log("解析行数...");
+  console.log("解析行...");
   const lines = parseAllRows(raw);
-  console.log(`共 ${lines.length} 行`);
   const header = parseCSVLine(lines[0]);
   const colMap = {};
   header.forEach((h, i) => { colMap[h] = i; });
+  console.log(`共 ${lines.length - 1} 条数据`);
 
-  console.log("开始导入...");
-  const BATCH = 3000;
-  let count = 0, skipped = 0;
+  const db = new SQL.Database();
 
-  const flush = db.transaction((rows) => {
-    for (const row of rows) {
-      if (!row.word || !row.translation) { skipped++; continue; }
-      insert.run({
-        word: row.word, phonetic: row.phonetic, definition: row.definition,
-        translation: row.translation, pos: row.pos,
-        pos_list: extractPos(row.translation),
-        tag: row.tag, bnc: row.bnc, frq: row.frq,
-        exchange: row.exchange, detail: row.detail,
-      });
-      count++;
-    }
-  });
+  db.run("CREATE TABLE entries (word TEXT PRIMARY KEY, phonetic TEXT, definition TEXT, translation TEXT, pos TEXT, pos_list TEXT DEFAULT '', tag TEXT, bnc INTEGER, frq INTEGER, exchange TEXT, detail TEXT)");
 
-  let batch = [];
+  const stmt =
+    "INSERT INTO entries (word, phonetic, definition, translation, pos, pos_list, tag, bnc, frq, exchange, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
+
+  console.log("导入中...");
+  let count = 0;
+
+  db.run("BEGIN");
   for (let i = 1; i < lines.length; i++) {
-    const fields = parseCSVLine(lines[i]);
-    batch.push({
-      word: (fields[colMap["word"]] ?? "").trim(),
-      phonetic: fields[colMap["phonetic"]] ?? "",
-      definition: fields[colMap["definition"]] ?? "",
-      translation: fields[colMap["translation"]] ?? "",
-      pos: fields[colMap["pos"]] ?? "",
-      tag: fields[colMap["tag"]] ?? "",
-      bnc: Number(fields[colMap["bnc"]] ?? 0) || 0,
-      frq: Number(fields[colMap["frq"]] ?? 0) || 0,
-      exchange: fields[colMap["exchange"]] ?? "",
-      detail: fields[colMap["detail"]] ?? "",
-    });
-    if (batch.length >= BATCH) { flush(batch); batch = []; }
-    if (count % 100000 < BATCH) {
-      process.stdout.write(`\r  已导入 ${count} 条...`);
+    const f = parseCSVLine(lines[i]);
+    const word = (f[colMap["word"]] ?? "").trim();
+    const translation = f[colMap["translation"]] ?? "";
+    if (!word || !translation) continue;
+
+    db.run(stmt, [
+      word,
+      f[colMap["phonetic"]] ?? "",
+      f[colMap["definition"]] ?? "",
+      translation,
+      f[colMap["pos"]] ?? "",
+      extractPos(translation),
+      f[colMap["tag"]] ?? "",
+      Number(f[colMap["bnc"]] ?? 0) || 0,
+      Number(f[colMap["frq"]] ?? 0) || 0,
+      f[colMap["exchange"]] ?? "",
+      f[colMap["detail"]] ?? "",
+    ]);
+    count++;
+
+    if (count % 1000 === 0) {
+      db.run("COMMIT");
+      db.run("BEGIN");
+      if (count % 100000 < 1000) console.log(`  已导入 ${count} 条...`);
     }
   }
-  if (batch.length) flush(batch);
+  db.run("COMMIT");
 
-  console.log(`\r  已导入 ${count} 条...`);
   console.log("创建索引...");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_entries_lower ON entries(lower(word))");
-  db.exec("PRAGMA journal_mode = WAL");
+  db.run("CREATE INDEX IF NOT EXISTS idx_entries_lower ON entries(LOWER(word))");
+
+  console.log("写入文件...");
+  const buffer = db.export();
+  writeFileSync(DB_PATH, Buffer.from(buffer));
 
   const size = (statSync(DB_PATH).size / 1048576).toFixed(1);
-  console.log(`\n导入完成: ${count} 条 (跳过 ${skipped} 条)`);
+  console.log(`\n导入完成: ${count} 条`);
   console.log(`数据库: ${DB_PATH} (${size} MB)`);
   db.close();
 }
 
-try {
-  main();
-} catch (e) {
-  console.error("导入失败:", e.message);
-  process.exit(1);
-}
+main().catch((e) => { console.error("失败:", e.message); process.exit(1); });

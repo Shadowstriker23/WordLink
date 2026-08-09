@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "缺少 word" }, { status: 400 });
   }
 
-  const dict = lookupWord(wordText);
+  const dict = await lookupWord(wordText);
   if (!dict) {
     return NextResponse.json({ error: "词典中未找到该单词" }, { status: 404 });
   }

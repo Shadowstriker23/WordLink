@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { createClient, type Client } from "@libsql/client";
 import path from "node:path";
 import { existsSync } from "node:fs";
 
@@ -27,9 +27,16 @@ export interface DictWordCard {
   phonetic: string;
   translation: string;
   meanings: PosMeaning[];
-  tags: string[]; // gk zk cet4 cet6 ky ...
+  tags: string[];
   example: string | null;
   freq: number;
+}
+
+export interface DictSuggestion {
+  word: string;
+  freq: number;
+  translation?: string;
+  tags: string[];
 }
 
 interface RawEntry {
@@ -46,14 +53,14 @@ interface RawEntry {
   detail: string;
 }
 
-let db: Database.Database | null = null;
+let client: Client | null = null;
 
-function getDb(): Database.Database | null {
+function getClient(): Client | null {
   if (!existsSync(DICT_PATH)) return null;
-  if (!db) {
-    db = new Database(DICT_PATH, { readonly: true });
+  if (!client) {
+    client = createClient({ url: `file:${DICT_PATH}` });
   }
-  return db;
+  return client;
 }
 
 /** 把 "n. 景象；奇观\nvt. 使…" 解析成 [{pos:'n.', meanings:['景象','奇观']}, ...] */
@@ -67,7 +74,6 @@ const POS_DISPLAY: Record<string, string> = {
 export function parseTranslation(translation: string): PosMeaning[] {
   if (!translation) return [];
   const result: PosMeaning[] = [];
-  // ECDICT 的翻译按 \n 分隔多个词性，每个以 "词性. " 开头
   const groups = translation.split("\n");
   for (const group of groups) {
     const m = group.match(/^(\[[^\]]+\]\s*)?([a-z]+\.)\s*(.+)$/i);
@@ -82,7 +88,10 @@ export function parseTranslation(translation: string): PosMeaning[] {
     }
   }
   if (result.length === 0 && groups[0]) {
-    result.push({ pos: "", meanings: groups.map((g) => g.trim()).filter(Boolean) });
+    result.push({
+      pos: "",
+      meanings: groups.map((g) => g.trim()).filter(Boolean),
+    });
   }
   return result;
 }
@@ -95,86 +104,86 @@ function extractExample(detail: string): string | null {
     const ex = d?.detail ?? d?.sentences;
     if (typeof ex === "string" && ex.trim()) return ex.trim();
     if (Array.isArray(ex)) {
-      const s = ex
+      return ex
         .map((x: unknown) => (typeof x === "string" ? x : null))
         .filter(Boolean)
-        .join(" ");
-      return s || null;
+        .join(" ") || null;
     }
   } catch {
-    /* ignore malformed JSON */
+    /* ignore */
   }
   return null;
 }
 
-export function lookupWord(word: string): DictWordCard | null {
-  const database = getDb();
-  if (!database) return null;
-  const row = database
-    .prepare("SELECT * FROM entries WHERE lower(word) = ?")
-    .get(word.toLowerCase()) as RawEntry | undefined;
+export async function lookupWord(word: string): Promise<DictWordCard | null> {
+  const db = getClient();
+  if (!db) return null;
+  const res = await db.execute({
+    sql: "SELECT * FROM entries WHERE LOWER(word) = ?",
+    args: [word.toLowerCase()],
+  });
+  const row = res.rows[0] as unknown as RawEntry | undefined;
   if (!row) return null;
   return {
-    word: row.word,
-    phonetic: row.phonetic,
-    translation: row.translation,
-    meanings: parseTranslation(row.translation),
-    tags: (row.tag ?? "").split(/\s+/).filter(Boolean),
-    example: extractExample(row.detail),
-    freq: row.frq ?? 0,
+    word: row.word as string,
+    phonetic: row.phonetic as string,
+    translation: (row.translation as string) ?? "",
+    meanings: parseTranslation((row.translation as string) ?? ""),
+    tags: ((row.tag as string) ?? "").split(/\s+/).filter(Boolean),
+    example: extractExample((row.detail as string) ?? ""),
+    freq: (row.frq as number) ?? 0,
   };
 }
 
-export interface DictSuggestion {
-  word: string;
-  freq: number;
-  pos?: string;
-  translation?: string;
-  tags: string[];
+async function querySuggestions(
+  sql: string,
+  args: (string | number)[],
+  limit: number
+): Promise<DictSuggestion[]> {
+  const db = getClient();
+  if (!db) return [];
+  const res = await db.execute({ sql: `${sql} LIMIT ${limit}`, args });
+  return (res.rows as unknown as RawEntry[]).map((r) => ({
+    word: r.word as string,
+    freq: (r.frq as number) ?? 0,
+    translation: r.translation as string,
+    tags: ((r.tag as string) ?? "").split(/\s+/).filter(Boolean),
+  }));
 }
 
-/** 前缀匹配，按频率排序（词频越高越常见） */
-export function searchPrefix(prefix: string, limit = 20): DictSuggestion[] {
-  const database = getDb();
-  if (!database || !prefix.trim()) return [];
+export async function searchPrefix(
+  prefix: string,
+  limit = 20
+): Promise<DictSuggestion[]> {
+  if (!prefix.trim()) return [];
   const p = prefix.toLowerCase().replace(/[^a-z'\-]/g, "");
   if (!p) return [];
-  const rows = database
-    .prepare(
-      "SELECT word, translation, tag, frq FROM entries WHERE lower(word) LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC LIMIT ?"
-    )
-    .all(`${p}%`, limit) as Pick<RawEntry, "word" | "translation" | "tag" | "frq">[];
-  return rows.map((r) => ({
-    word: r.word,
-    freq: r.frq ?? 0,
-    translation: r.translation,
-    tags: (r.tag ?? "").split(/\s+/).filter(Boolean),
-  }));
+  return querySuggestions(
+    "SELECT word, translation, tag, frq FROM entries WHERE LOWER(word) LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC",
+    [`${p}%`],
+    limit
+  );
 }
 
-/** 模糊/包含匹配 */
-export function searchContains(term: string, limit = 20): DictSuggestion[] {
-  const database = getDb();
-  if (!database || !term.trim()) return [];
+export async function searchContains(
+  term: string,
+  limit = 20
+): Promise<DictSuggestion[]> {
+  if (!term.trim()) return [];
   const t = term.toLowerCase().replace(/[^a-z'\-]/g, "");
   if (!t) return [];
-  const rows = database
-    .prepare(
-      "SELECT word, translation, tag, frq FROM entries WHERE lower(word) LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC LIMIT ?"
-    )
-    .all(`%${t}%`, limit) as Pick<RawEntry, "word" | "translation" | "tag" | "frq">[];
-  return rows.map((r) => ({
-    word: r.word,
-    freq: r.frq ?? 0,
-    translation: r.translation,
-    tags: (r.tag ?? "").split(/\s+/).filter(Boolean),
-  }));
+  return querySuggestions(
+    "SELECT word, translation, tag, frq FROM entries WHERE LOWER(word) LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC",
+    [`%${t}%`],
+    limit
+  );
 }
 
-/** 按词性检索词典（如 #adj. 返回形容词） */
-export function searchByPos(pos: string, limit = 30): DictSuggestion[] {
-  const database = getDb();
-  if (!database || !pos.trim()) return [];
+export async function searchByPos(
+  pos: string,
+  limit = 30
+): Promise<DictSuggestion[]> {
+  if (!pos.trim()) return [];
   let p = pos.toLowerCase().replace(/\./g, "").replace(/[^a-z]/g, "");
   const normalize: Record<string, string> = {
     a: "adj",
@@ -184,46 +193,28 @@ export function searchByPos(pos: string, limit = 30): DictSuggestion[] {
   };
   p = normalize[p] ?? p;
   if (!p) return [];
-  const rows = database
-    .prepare(
-      "SELECT word, translation, tag, frq FROM entries WHERE pos_list = ? OR pos_list LIKE ? OR pos_list LIKE ? OR pos_list LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC LIMIT ?"
-    )
-    .all(p, `%,${p}`, `${p},%`, `%,${p},%`, limit) as Pick<
-    RawEntry,
-    "word" | "translation" | "tag" | "frq"
-  >[];
-  return rows.map((r) => ({
-    word: r.word,
-    freq: r.frq ?? 0,
-    translation: r.translation,
-    tags: (r.tag ?? "").split(/\s+/).filter(Boolean),
-  }));
+  return querySuggestions(
+    "SELECT word, translation, tag, frq FROM entries WHERE pos_list = ? OR pos_list LIKE ? OR pos_list LIKE ? OR pos_list LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC",
+    [p, `%,${p}`, `${p},%`, `%,${p},%`],
+    limit
+  );
 }
 
-/** 按词义检索词典（如 "意思:场面" → 翻译里含"场面"的词） */
-export function searchByTranslation(term: string, limit = 30): DictSuggestion[] {
-  const database = getDb();
-  if (!database || !term.trim()) return [];
-  const rows = database
-    .prepare(
-      "SELECT word, translation, tag, frq FROM entries WHERE translation LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC LIMIT ?"
-    )
-    .all(`%${term}%`, limit) as Pick<
-    RawEntry,
-    "word" | "translation" | "tag" | "frq"
-  >[];
-  return rows.map((r) => ({
-    word: r.word,
-    freq: r.frq ?? 0,
-    translation: r.translation,
-    tags: (r.tag ?? "").split(/\s+/).filter(Boolean),
-  }));
+export async function searchByTranslation(
+  term: string,
+  limit = 30
+): Promise<DictSuggestion[]> {
+  if (!term.trim()) return [];
+  return querySuggestions(
+    "SELECT word, translation, tag, frq FROM entries WHERE translation LIKE ? ORDER BY (frq = 0) ASC, frq ASC, (bnc = 0) ASC, bnc ASC",
+    [`%${term}%`],
+    limit
+  );
 }
 
-/** 检测输入是否为词性（adj./n./v./vt./adv. 等） */
 const POS_SET = new Set([
-  "n", "v", "vt", "vi", "adj", "adv", "prep", "conj", "pron", "num",
-  "art", "int", "abbr", "aux", "modal", "a", "ad", "suf", "pref",
+  "n", "v", "vt", "vi", "adj", "adv", "prep", "conj", "pron",
+  "num", "art", "int", "abbr", "aux", "modal", "a", "ad", "suf", "pref",
 ]);
 
 export function isPosToken(token: string): boolean {

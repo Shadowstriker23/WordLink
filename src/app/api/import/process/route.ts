@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
       }
 
       // 补充词典词性标签（如 n. / adj. / vt.）
-      const dict = lookupWord(text);
+      const dict = await lookupWord(text);
       if (dict) {
         const posSet = new Set<string>();
         for (const m of parseTranslation(dict.translation)) {

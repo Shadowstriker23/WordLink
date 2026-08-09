@@ -1,11 +1,9 @@
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
 import path from "node:path";
 import { AFFIX_DESCRIPTIONS } from "../src/lib/affix-desc";
 
-const adapter = new PrismaBetterSqlite3({
-  url: path.resolve(process.cwd(), "dev.db"),
-});
+const adapter = new PrismaLibSql({ url: `file:${path.resolve("dev.db")}` });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
@@ -27,6 +25,4 @@ async function main() {
   console.log(`共 ${tags.length} 个词根/词缀标签，${missing} 个暂无对照（将由 AI 生成）`);
 }
 
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
+main().catch(console.error).finally(() => prisma.$disconnect());

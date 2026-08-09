@@ -48,7 +48,7 @@ export default async function TagPage({
   const meaningText = isMeaningTag ? decoded.slice("意思:".length) : "";
   let dictWords: DictSuggestion[] = [];
   if (isMeaningTag && meaningText) {
-    dictWords = searchByTranslation(meaningText, 40);
+    dictWords = await searchByTranslation(meaningText, 40);
   }
 
   const words = tags

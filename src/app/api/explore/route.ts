@@ -136,12 +136,12 @@ type WordWithTags = {
 
   let suggestions: DictSuggestion[] = [];
   if (wordTokens.length) {
-    const fromPrefix = searchPrefix(primary, 12);
+    const fromPrefix = await searchPrefix(primary, 12);
     suggestions = fromPrefix.filter(
       (s) => !dictSet.has(s.word.toLowerCase()) && s.word.toLowerCase() !== primary
     );
   } else if (primary) {
-    const fromContains = searchContains(primary, 12);
+    const fromContains = await searchContains(primary, 12);
     suggestions = fromContains.filter((s) => !dictSet.has(s.word.toLowerCase()));
   }
 
@@ -149,7 +149,7 @@ type WordWithTags = {
   let posSuggestions: DictSuggestion[] = [];
   if (posDictTokens.length) {
     for (const p of posDictTokens) {
-      const hits = searchByPos(p, 20);
+      const hits = await searchByPos(p, 20);
       posSuggestions = [...posSuggestions, ...hits.filter((h) => !dictSet.has(h.word.toLowerCase()))];
     }
     posSuggestions = posSuggestions.slice(0, 30);

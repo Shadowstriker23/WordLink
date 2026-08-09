@@ -42,7 +42,7 @@ export default async function WordDetailPage({
 
   if (!word) notFound();
 
-  const dict = lookupWord(word.text);
+  const dict = await lookupWord(word.text);
   const phonetic = word.pronunciation ?? dict?.phonetic ?? null;
   const meanings = dict?.meanings.length ? dict.meanings : null;
   const example = word.exampleSentence ?? dict?.example ?? null;

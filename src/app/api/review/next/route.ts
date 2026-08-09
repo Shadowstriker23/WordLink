@@ -17,9 +17,10 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const items = dueReviews.map((r) => {
-    const dict = lookupWord(r.word.text);
-    return {
+  const items = await Promise.all(
+    dueReviews.map(async (r) => {
+      const dict = await lookupWord(r.word.text);
+      return {
       wordId: r.wordId,
       word: r.word.text,
       meaning: r.word.meaning,
@@ -35,7 +36,8 @@ export async function GET(req: NextRequest) {
       stability: r.stability,
       due: r.due,
     };
-  });
+  }));
+
 
   return NextResponse.json({ reviews: items });
 }

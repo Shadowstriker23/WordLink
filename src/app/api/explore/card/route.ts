@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "缺少 word 参数" }, { status: 400 });
   }
 
-  const dict = lookupWord(word);
+  const dict = await lookupWord(word);
 
   const appWord = await prisma.word.findUnique({
     where: { text: word.toLowerCase().trim() },
