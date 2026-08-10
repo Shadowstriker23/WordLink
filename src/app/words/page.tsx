@@ -39,21 +39,6 @@ export default function WordsPage() {
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeMsg, setReanalyzeMsg] = useState("");
 
-  const reanalyze = async () => {
-    setReanalyzing(true);
-    setReanalyzeMsg("");
-    try {
-      const res = await fetch("/api/reanalyze", { method: "POST" });
-      const data = await res.json();
-      setReanalyzeMsg(`完成: 补词性${data.posAdded} 补意思${data.meaningAdded} 清理${data.cleaned}`);
-      load();
-    } catch {
-      setReanalyzeMsg("失败");
-    } finally {
-      setReanalyzing(false);
-    }
-  };
-
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
@@ -64,6 +49,21 @@ export default function WordsPage() {
     setWords(data.words);
     setLoading(false);
   }, [q, type]);
+
+  const reanalyze = useCallback(async () => {
+    setReanalyzing(true);
+    setReanalyzeMsg("");
+    try {
+      const res = await fetch("/api/reanalyze", { method: "POST" });
+      const data = await res.json();
+      setReanalyzeMsg(`完成: 清${data.cleaned} AI+${data.aiEnriched} 典+${data.dictEnriched}`);
+      load();
+    } catch {
+      setReanalyzeMsg("失败");
+    } finally {
+      setReanalyzing(false);
+    }
+  }, [load]);
 
   useEffect(() => {
     const t = setTimeout(load, 300);
