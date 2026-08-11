@@ -140,3 +140,41 @@ export async function generateWordRelationships(word: string) {
   const result = await analyzeWords({ words: [word], existingWords: [] });
   return result.words[0];
 }
+
+/** 中文 → 英文翻译：返回最常见译法 */
+export async function translateChinese(chineseWords: string[]): Promise<Map<string, string>> {
+  const client = await getClient();
+  if (!client.apiKey) throw new Error("未配置 AI API Key");
+
+  const prompt = `请将以下中文词汇翻译成最常见的英文单词。
+
+输入：
+${chineseWords.join("\n")}
+
+输出 JSON 格式：{"result": [{"zh": "中文", "en": "english"}, ...]}
+
+只返回 JSON，不要任何额外文字。`;
+
+  const response = await client.chat.completions.create({
+    model: (await getSettings()).aiModel ?? defaultModel,
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error("翻译返回为空");
+
+  const parsed = JSON.parse(content);
+  const result = new Map<string, string>();
+  const items = parsed.result ?? parsed.translations ?? [];
+  for (const item of items) {
+    if (item.zh && item.en) result.set(item.zh, item.en.toLowerCase());
+  }
+  return result;
+}
+
+/** 检测是否含中文 */
+export function isChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text);
+}

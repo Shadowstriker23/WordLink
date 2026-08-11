@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { analyzeWords } from "@/lib/ai";
+import { analyzeWords, translateChinese, isChinese } from "@/lib/ai";
 import { prisma } from "@/lib/db";
 import { getOrCreateReview } from "@/lib/fsrs";
 import { lookupWord, parseTranslation, lookupLemma } from "@/lib/dict";
@@ -52,8 +52,28 @@ export async function POST(req: NextRequest) {
     }
     const dedupped = [...new Set(resolvedWords)];
 
+    // 中文→英文翻译：常见汉语词自动转为英文后再分析
+    const translationMap = new Map<string, string>();
+    const chineseWords = dedupped.filter(isChinese);
+    if (chineseWords.length) {
+      try {
+        const transResult = await translateChinese(chineseWords);
+        for (const zh of chineseWords) {
+          const en = transResult.get(zh);
+          if (en) {
+            translationMap.set(zh, en);
+          }
+        }
+      } catch { /* 翻译失败不影响后续 */ }
+    }
+
+    // 将中文替换为英文后再分析（若翻译成功）
+    const toAnalyze = dedupped.map((w) => translationMap.get(w) ?? w);
+    const uniqueAnalyze = [...new Set(toAnalyze)];
+    const finalWords = uniqueAnalyze.filter((w) => !existingSet.has(w.toLowerCase()));
+
     const analysis = await analyzeWords({
-      words: dedupped,
+      words: finalWords,
       existingWords: [...existingSet],
     });
 
@@ -158,7 +178,10 @@ export async function POST(req: NextRequest) {
     const lemmas: Record<string, { base: string; type: string }> = {};
     for (const [orig, info] of lemmaMap) lemmas[orig] = info;
 
-    return NextResponse.json({ words: results, lemmas });
+    const translations: Record<string, string> = {};
+    for (const [zh, en] of translationMap) translations[zh] = en;
+
+    return NextResponse.json({ words: results, lemmas, translations });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "处理失败";
     return NextResponse.json({ error: msg }, { status: 500 });
